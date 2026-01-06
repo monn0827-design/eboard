@@ -1,0 +1,310 @@
+import React, { useState, useEffect } from 'react';
+import { Globe, Users, Target, ShieldCheck, Clock, Search, ChevronRight, MapPin, ExternalLink, Trophy, Zap } from 'lucide-react';
+import { initializeApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { getFirestore, collection, doc, setDoc, onSnapshot, query, orderBy, limit, increment } from 'firebase/firestore';
+
+// 환경 변수에서 설정 로드 (실제 환경에서는 __firebase_config 사용)
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'global-partner-manager';
+
+const GlobalPartnerManager = () => {
+  const [activeTab, setActiveTab] = useState('Asia');
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const [searchTerm, setSearchTerm] = useState('');
+  const [user, setUser] = useState(null);
+  const [rankings, setRankings] = useState([]);
+
+  // 1. Firebase 인증 및 초기화
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInAnonymously(auth); // 예시 환경을 위해 익명 로그인 사용
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Auth Error:", error);
+      }
+    };
+    initAuth();
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        // 사용자 데이터 초기화/생성
+        const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'rankings', currentUser.uid);
+        setDoc(userRef, { 
+          uid: currentUser.uid, 
+          score: increment(0), 
+          lastActive: Date.now() 
+        }, { merge: true });
+      }
+    });
+
+    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => {
+      clearInterval(timer);
+      unsubscribeAuth();
+    };
+  }, []);
+
+  // 2. 실시간 순위 데이터 가져오기 (RULE 2: 단순 쿼리 후 메모리 정렬)
+  useEffect(() => {
+    if (!user) return;
+
+    const rankingsRef = collection(db, 'artifacts', appId, 'public', 'data', 'rankings');
+    const q = query(rankingsRef);
+
+    const unsubscribeRank = onSnapshot(q, (snapshot) => {
+      const rawData = snapshot.docs.map(doc => doc.data());
+      // 클라이언트 측에서 점수순 정렬
+      const sortedData = rawData.sort((a, b) => b.score - a.score);
+      setRankings(sortedData);
+    }, (error) => console.error("Snapshot Error:", error));
+
+    return () => unsubscribeRank();
+  }, [user]);
+
+  // 3. 활동 점수 업데이트 (순위 반영 테스트용)
+  const handleActivity = async () => {
+    if (!user) return;
+    const userRef = doc(db, 'artifacts', appId, 'public', 'data', 'rankings', user.uid);
+    await setDoc(userRef, { 
+      score: increment(10), 
+      lastActive: Date.now() 
+    }, { merge: true });
+  };
+
+  const continentData = {
+    Asia: {
+      name: '아시아', color: 'bg-blue-600', stats: { existing: 12, new: 25, focus: 'NMPA, CDSCO' },
+      keyPartners: [
+        { country: '중국', name: 'KC 이너벨라', manager: '양승룡 본부장', cert: 'NMPA Filing' },
+        { country: '베트남', name: '현지 총판', manager: 'MOH 등록 완료', cert: 'MOH Notification' },
+        { country: '인도', name: 'SLAXMI VENTURES', manager: 'Anjana Zankat', cert: 'CDSCO' }
+      ],
+      newTargets: ['태국(FDA)', '필리핀(FDA)', '카자흐스탄', '우즈베키스탄']
+    },
+    Europe: {
+      name: '유럽', color: 'bg-indigo-600', stats: { existing: 8, new: 15, focus: 'CPNP, RP' },
+      keyPartners: [
+        { country: '프랑스', name: 'FRA Yhssene', manager: 'Yhssene', cert: 'CPNP + PIF' },
+        { country: '벨기에', name: 'Les Divas', manager: 'Admin', cert: 'CPNP + RP' },
+        { country: '세르비아', name: 'PKHS', manager: 'Anja', cert: '비EU 규정' }
+      ],
+      newTargets: ['북유럽(덴마크/스웨덴)', '이탈리아', '스페인']
+    },
+    Americas: {
+      name: '아메리카', color: 'bg-red-600', stats: { existing: 10, new: 20, focus: 'FDA, CNF' },
+      keyPartners: [
+        { country: '미국(LA)', name: 'RELAXATION with headspa', manager: 'Astrid Kim', cert: 'FDA' },
+        { country: '미국(NY)', name: 'SCARLETT ROSE', manager: 'Annie Kim', cert: 'FDA' },
+        { country: '브라질', name: '상파울루 바이어', manager: 'Partner', cert: 'ANVISA' }
+      ],
+      newTargets: ['캐나다(CNF)', '멕시코(COFEPRIS)', '파나마']
+    },
+    Oceania: {
+      name: '오세아니아', color: 'bg-green-600', stats: { existing: 5, new: 8, focus: 'Health Dept' },
+      keyPartners: [
+        { country: '호주(시드니)', name: 'NKM SOLUTIONS', manager: 'Nicky Kim', cert: 'Ministry of Health' },
+        { country: '호주(브리즈번)', name: 'Glow Head Spa', manager: 'Eunju Park', cert: 'Ministry of Health' }
+      ],
+      newTargets: ['피지', '뉴질랜드 확장', '파푸아뉴기니']
+    },
+    Africa: {
+      name: '아프리카', color: 'bg-orange-600', stats: { existing: 3, new: 12, focus: 'MOH, NAFDAC' },
+      keyPartners: [
+        { country: '이집트', name: 'MOH Partner', manager: 'Pending', cert: 'Ministry of Health' },
+        { country: '남아공', name: 'SA Local Dist.', manager: 'Admin', cert: 'Regulatory Compliance' }
+      ],
+      newTargets: ['나이지리아(NAFDAC)', '가나(FDA)', '에티오피아']
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-50 font-sans text-gray-900">
+      <header className="bg-white border-b sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-600 p-2 rounded-lg">
+              <Globe className="text-white w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold tracking-tight">2026 글로벌 파트너십 관리</h1>
+              <p className="text-xs text-gray-500 font-medium">실시간 사용자 순위 시스템 가동 중</p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-4">
+             <div className="hidden sm:flex items-center gap-2 text-sm font-medium bg-gray-100 px-4 py-2 rounded-full border">
+              <Clock className="w-4 h-4 text-blue-600" />
+              <span>{currentTime.toLocaleTimeString('ko-KR')} (KST)</span>
+            </div>
+            {user && (
+              <div className="text-xs bg-blue-50 text-blue-700 px-3 py-2 rounded-lg border border-blue-200">
+                접속 ID: <span className="font-mono font-bold">{user.uid}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Navigation Tabs */}
+        <div className="flex overflow-x-auto gap-2 pb-4 scrollbar-hide mb-6">
+          {Object.entries(continentData).map(([id, data]) => (
+            <button
+              key={id}
+              onClick={() => setActiveTab(id)}
+              className={`flex-shrink-0 px-6 py-3 rounded-xl font-semibold transition-all duration-200 ${
+                activeTab === id 
+                ? `${data.color} text-white shadow-lg scale-105` 
+                : 'bg-white text-gray-600 hover:bg-gray-100 border'
+              }`}
+            >
+              {data.name}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+          
+          {/* Left: Leaderboard & Stats */}
+          <div className="space-y-6 lg:col-span-1">
+            {/* Real-time Rankings */}
+            <div className="bg-white p-6 rounded-2xl shadow-sm border border-yellow-200 bg-gradient-to-b from-yellow-50/30 to-white">
+              <h2 className="text-lg font-bold mb-4 flex items-center gap-2 text-yellow-700">
+                <Trophy className="w-5 h-5" />
+                파트너 활동 순위
+              </h2>
+              <div className="space-y-3">
+                {rankings.map((rk, idx) => (
+                  <div key={rk.uid} className={`flex items-center justify-between p-3 rounded-xl border ${rk.uid === user?.uid ? 'bg-blue-100 border-blue-300 ring-2 ring-blue-400' : 'bg-white'}`}>
+                    <div className="flex items-center gap-3">
+                      <span className={`w-6 h-6 flex items-center justify-center rounded-full text-xs font-bold ${idx === 0 ? 'bg-yellow-400 text-white' : 'bg-gray-200'}`}>
+                        {idx + 1}
+                      </span>
+                      <span className="text-xs font-mono font-medium truncate w-20">{rk.uid === user?.uid ? '나 (You)' : rk.uid.substring(0, 8)}</span>
+                    </div>
+                    <span className="font-bold text-sm text-blue-600">{rk.score} pt</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-white p-6 rounded-2xl shadow-sm border">
+              <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+                <Target className="text-blue-600 w-5 h-5" />
+                {continentData[activeTab].name} 통계
+              </h2>
+              <div className="grid grid-cols-1 gap-4">
+                <div className="bg-blue-50 p-4 rounded-xl">
+                  <p className="text-xs text-blue-600 font-bold">기존 바이어</p>
+                  <p className="text-2xl font-black text-blue-900">{continentData[activeTab].stats.existing}개소</p>
+                </div>
+                <div className="bg-purple-50 p-4 rounded-xl">
+                  <p className="text-xs text-purple-600 font-bold">신규 타겟</p>
+                  <p className="text-2xl font-black text-purple-900">{continentData[activeTab].stats.new}개국</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Right: Partners Table */}
+          <div className="lg:col-span-3 space-y-6">
+            <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+              <div className="p-6 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <h2 className="text-lg font-bold flex items-center gap-2">
+                  <Users className="text-blue-600 w-5 h-5" />
+                  주요 거래선 리스트
+                </h2>
+                <div className="relative">
+                  <Search className="w-4 h-4 absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400" />
+                  <input 
+                    type="text" 
+                    placeholder="검색..." 
+                    className="pl-10 pr-4 py-2 bg-gray-50 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none w-full"
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+              </div>
+              
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-gray-50 text-gray-500 font-bold">
+                    <tr>
+                      <th className="px-6 py-4">국가</th>
+                      <th className="px-6 py-4">바이어 명</th>
+                      <th className="px-6 py-4">담당자</th>
+                      <th className="px-6 py-4">인증</th>
+                      <th className="px-6 py-4 text-center">활동 업데이트</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {continentData[activeTab].keyPartners
+                      .filter(p => p.country.includes(searchTerm) || p.name.includes(searchTerm))
+                      .map((partner, idx) => (
+                      <tr key={idx} className="hover:bg-blue-50/30 transition-colors group">
+                        <td className="px-6 py-4 font-semibold">
+                          <div className="flex items-center gap-2">
+                            <MapPin className="w-3 h-3 text-red-500" />
+                            {partner.country}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 font-bold text-blue-700">{partner.name}</td>
+                        <td className="px-6 py-4 text-gray-600">{partner.manager}</td>
+                        <td className="px-6 py-4">
+                          <span className="px-2 py-1 bg-green-100 text-green-700 text-xs font-bold rounded">
+                            {partner.cert}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <button 
+                            onClick={handleActivity}
+                            className="inline-flex items-center gap-1 bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-xs font-bold transition-transform active:scale-95 shadow-sm"
+                          >
+                            <Zap className="w-3 h-3 fill-white" />
+                            활동기록
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Strategy Card */}
+            <div className="bg-gradient-to-r from-blue-700 to-indigo-800 p-8 rounded-2xl text-white shadow-lg relative overflow-hidden">
+               <Globe className="absolute -right-10 -bottom-10 w-48 h-48 opacity-10" />
+               <div className="relative z-0">
+                <h2 className="text-xl font-bold mb-2">2026 글로벌 파트너 실시간 협업 시스템</h2>
+                <p className="text-blue-100 text-sm mb-6 max-w-md">
+                  활동 업데이트 버튼을 클릭하면 점수가 기록되며 전체 사용자 순위가 실시간으로 반영됩니다. 전 세계 파트너들과 성과를 공유하세요.
+                </p>
+                <div className="flex flex-wrap gap-4">
+                  <div className="flex items-center gap-2 bg-white/20 px-4 py-2 rounded-xl backdrop-blur-sm border border-white/20">
+                    <ShieldCheck className="w-4 h-4" />
+                    <span className="text-xs font-bold">보안 연결됨</span>
+                  </div>
+                  <div className="flex items-center gap-2 bg-white/20 px-4 py-2 rounded-xl backdrop-blur-sm border border-white/20">
+                    <Trophy className="w-4 h-4" />
+                    <span className="text-xs font-bold">실시간 랭킹 시스템</span>
+                  </div>
+                </div>
+               </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  );
+};
+
+export default GlobalPartnerManager;
